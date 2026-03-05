@@ -1,52 +1,68 @@
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const path = require('path');
-const fs = require('fs');
+const { TelegramClient } = require('telegram');
+const { StringSession } = require('telegram/sessions');
+const { Api } = require('telegram/tl');
+const bodyParser = require('body-parser');
+const cors = require('cors');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-
-// База данных в JSON файле (не удаляется при перезагрузке на локале, 
-// но на Render диск эфемерный, для вечности лучше юзать внешнюю БД, 
-// но для старта JSON хватит)
-const DB_FILE = './database.json';
-if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify({ users: [], messages: [] }));
-
-const db = JSON.parse(fs.readFileSync(DB_FILE));
-
+app.use(cors());
+app.use(bodyParser.json());
 app.use(express.static('public'));
-app.use(express.json());
 
-// Самопрозвон для Render (чтобы не спал)
-setInterval(() => {
-    http.get(`http://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost:3000'}`);
-}, 1000 * 60 * 10); // каждые 10 минут
+// --- КОНФИГУРАЦИЯ ---
+const apiId = 1234567; // ВСТАВЬ СВОЙ API_ID
+const apiHash = "твой_api_hash"; // ВСТАВЬ СВОЙ API_HASH
+let stringSession = new StringSession(""); // Пустая строка для начала
+// --------------------
 
-io.on('connection', (socket) => {
-    socket.on('register', (data) => {
-        const exists = db.users.find(u => u.username === data.username);
-        if (exists) return socket.emit('error_auth', 'Логин занят');
+let client;
+
+app.post('/api/send-code', async (req, res) => {
+    const { phoneNumber } = req.body;
+    try {
+        client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
+        await client.connect();
         
-        const newUser = { ...data, id: socket.id, online: true, premium: true };
-        db.users.push(newUser);
-        fs.writeFileSync(DB_FILE, JSON.stringify(db));
-        socket.emit('auth_success', newUser);
-    });
-
-    socket.on('message', (msg) => {
-        io.emit('chat_message', msg); // В реальном проекте лучше слать конкретному юзеру
-    });
-
-    socket.on('typing', (user) => {
-        socket.broadcast.emit('user_typing', user);
-    });
-    
-    socket.on('disconnect', () => {
-        // Логика оффлайна
-    });
+        const { phoneCodeHash } = await client.sendCode({ apiId, apiHash }, phoneNumber);
+        res.json({ success: true, phoneCodeHash });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.post('/api/login', async (req, res) => {
+    const { phoneNumber, phoneCode, phoneCodeHash } = req.body;
+    try {
+        await client.signIn({
+            phoneNumber,
+            phoneCode: async () => phoneCode,
+            phoneCodeHash,
+            onError: (err) => console.log(err),
+        });
+        
+        const savedSession = client.session.save();
+        console.log("ВАША СЕССИЯ (СОХРАНИТЕ ЕЁ):", savedSession);
+        // В продакшене эту строку нужно сохранить в БД или .env
+        res.json({ success: true, session: savedSession });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/dialogs', async (req, res) => {
+    try {
+        const dialogs = await client.getDialogs({});
+        const chatList = dialogs.map(d => ({
+            id: d.id,
+            title: d.title || d.entity.firstName || "Unknown",
+            lastMessage: d.message.message,
+            unreadCount: d.unreadCount
+        }));
+        res.json(chatList);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.listen(3000, () => console.log('Server running on http://localhost:3000'));
