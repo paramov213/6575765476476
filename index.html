@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TG Clone Premium</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root { --tg-blue: #2481cc; --premium-glow: 0 0 15px #00d2ff, 0 0 30px #3a7bd5; }
+        body { font-family: sans-serif; margin: 0; background: #0e1621; color: white; display: flex; height: 100vh; }
+        
+        /* Premium Glow */
+        .avatar-container.premium { border-radius: 50%; box-shadow: var(--premium-glow); border: 2px solid #00d2ff; }
+        
+        .chat-area { flex: 1; display: flex; flex-direction: column; }
+        #messages { flex: 1; overflow-y: auto; padding: 20px; }
+        .input-panel { padding: 10px; background: #17212b; display: flex; gap: 10px; }
+        
+        input { background: #242f3d; border: none; color: white; padding: 10px; border-radius: 5px; flex: 1; }
+        button { background: var(--tg-blue); border: none; color: white; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+
+        .nft-badge { font-size: 10px; background: linear-gradient(45deg, gold, orange); padding: 2px 5px; border-radius: 4px; margin-left: 5px; }
+        
+        @media (max-width: 600px) {
+            /* Стили для телефона */
+            body { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div id="auth-screen">
+        <h2>Вход в мессенджер</h2>
+        <input type="text" id="username" placeholder="Юзернейм">
+        <button onclick="register()">Войти</button>
+    </div>
+
+    <div id="chat-screen" style="display:none;" class="chat-area">
+        <div id="messages"></div>
+        <div id="typing-status"></div>
+        <div class="input-panel">
+            <button onclick="sendVoice()">🎤</button>
+            <input type="text" id="msgInput" placeholder="Сообщение..." oninput="isTyping()">
+            <button onclick="sendMsg()">Отправить</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let myUser = null;
+        let unreadCount = 0;
+
+        function register() {
+            const username = document.getElementById('username').value;
+            socket.emit('register', { username });
+        }
+
+        socket.on('auth_success', (user) => {
+            myUser = user;
+            document.getElementById('auth-screen').style.display = 'none';
+            document.getElementById('chat-screen').style.display = 'flex';
+        });
+
+        function sendMsg() {
+            const text = document.getElementById('msgInput').value;
+            socket.emit('message', { from: myUser.username, text });
+            document.getElementById('msgInput').value = '';
+        }
+
+        socket.on('chat_message', (msg) => {
+            const div = document.createElement('div');
+            div.innerHTML = `<b>${msg.from}:</b> ${msg.text}`;
+            document.getElementById('messages').appendChild(div);
+            
+            if (document.hidden) {
+                unreadCount++;
+                document.title = `(${unreadCount}) TG Clone`;
+                new Notification("Новое сообщение от " + msg.from);
+            }
+        });
+
+        function isTyping() {
+            socket.emit('typing', myUser.username);
+        }
+
+        socket.on('user_typing', (user) => {
+            const status = document.getElementById('typing-status');
+            status.innerText = `${user} печатает...`;
+            setTimeout(() => status.innerText = '', 2000);
+        });
+
+        // Запрос разрешений на уведомления
+        if (Notification.permission !== "granted") Notification.requestPermission();
+        
+        window.onfocus = () => {
+            unreadCount = 0;
+            document.title = "TG Clone Premium";
+        };
+    </script>
+</body>
+</html>
